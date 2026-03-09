@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Automation Architecture — Jira Fulfillment</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f1117; color: #e1e4e8; padding: 24px; }
+
+  .nav { display: flex; gap: 4px; margin-bottom: 24px; background: #1a1d27; border-radius: 10px; padding: 4px; border: 1px solid #2d3140; width: fit-content; }
+  .nav a { padding: 8px 20px; border-radius: 8px; font-size: 13px; font-weight: 500; color: #9ca3af; text-decoration: none; transition: all 0.15s; }
+  .nav a:hover { color: #e1e4e8; background: #2d3140; }
+  .nav a.active { background: #60a5fa22; color: #60a5fa; border: 1px solid #60a5fa44; }
+
+  .header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 32px; }
+  .header h1 { font-size: 24px; font-weight: 600; color: #fff; }
+  .header .updated { font-size: 13px; color: #6b7280; }
+
+  .stats-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; margin-bottom: 32px; }
+  .stat-card { background: #1a1d27; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #2d3140; }
+  .stat-card .number { font-size: 36px; font-weight: 700; margin-bottom: 4px; }
+  .stat-card .label { font-size: 12px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-card.total .number { color: #e1e4e8; }
+  .stat-card.backlog .number { color: #a78bfa; }
+  .stat-card.wip .number { color: #fbbf24; }
+  .stat-card.done .number { color: #34d399; }
+  .stat-card.projects .number { color: #60a5fa; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 24px; margin-bottom: 32px; }
+
+  .card { background: #1a1d27; border-radius: 12px; padding: 24px; border: 1px solid #2d3140; }
+  .card h2 { font-size: 16px; font-weight: 600; margin-bottom: 16px; color: #fff; }
+
+  .chart-container { position: relative; height: 280px; }
+  .chart-container-tall { position: relative; height: 400px; }
+
+  .project-table { width: 100%; border-collapse: collapse; }
+  .project-table th { text-align: left; padding: 8px 12px; font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid #2d3140; }
+  .project-table td { padding: 10px 12px; font-size: 14px; border-bottom: 1px solid #1f2333; }
+  .project-table tr:hover { background: #1f2333; }
+  .project-table .right { text-align: right; }
+
+  .progress-bar { height: 8px; border-radius: 4px; background: #2d3140; overflow: hidden; display: flex; min-width: 120px; }
+  .progress-bar .seg { height: 100%; }
+  .progress-bar .seg-done { background: #34d399; }
+  .progress-bar .seg-wip { background: #fbbf24; }
+  .progress-bar .seg-todo { background: #a78bfa; }
+
+  .filter-row { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+  .filter-btn { padding: 6px 14px; border-radius: 20px; border: 1px solid #2d3140; background: transparent; color: #9ca3af; font-size: 13px; cursor: pointer; transition: all 0.15s; }
+  .filter-btn:hover { border-color: #60a5fa; color: #60a5fa; }
+  .filter-btn.active { background: #60a5fa22; border-color: #60a5fa; color: #60a5fa; }
+
+  .badge { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+  .badge-done { background: #34d39922; color: #34d399; }
+  .badge-wip { background: #fbbf2422; color: #fbbf24; }
+  .badge-todo { background: #a78bfa22; color: #a78bfa; }
+  .badge-empty { background: #6b728022; color: #6b7280; }
+
+  .jira-link { color: #60a5fa; text-decoration: none; font-size: 12px; }
+  .jira-link:hover { text-decoration: underline; }
+  .slack-tag { color: #6b7280; font-size: 12px; }
+
+  .completion-pct { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .pct-high { color: #34d399; }
+  .pct-mid { color: #fbbf24; }
+  .pct-low { color: #a78bfa; }
+</style>
+</head>
+<body>
+
+<div class="nav">
+  <a href="https://vercel-dashboard-sooty.vercel.app">Project Pipeline</a>
+  <a href="#" class="active">Jira Fulfillment</a>
+</div>
+
+<div class="header">
+  <h1>Automation Architecture — Jira Fulfillment</h1>
+  <span class="updated">Last updated: March 9, 2026</span>
+</div>
+
+<!-- Aggregate stats -->
+<div class="stats-row">
+  <div class="stat-card projects"><div class="number" id="statProjects">0</div><div class="label">Active Projects</div></div>
+  <div class="stat-card total"><div class="number" id="statTotal">0</div><div class="label">Total Issues</div></div>
+  <div class="stat-card backlog"><div class="number" id="statBacklog">0</div><div class="label">Backlog / To Do</div></div>
+  <div class="stat-card wip"><div class="number" id="statWip">0</div><div class="label">In Progress</div></div>
+  <div class="stat-card done"><div class="number" id="statDone">0</div><div class="label">Done</div></div>
+</div>
+
+<!-- Charts row -->
+<div class="grid-2">
+  <div class="card">
+    <h2>Overall Completion</h2>
+    <div class="chart-container"><canvas id="completionDonut"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>Completion by Project</h2>
+    <div class="chart-container"><canvas id="completionBar"></canvas></div>
+  </div>
+</div>
+
+<!-- Stacked bar chart -->
+<div class="card" style="margin-bottom: 32px;">
+  <h2>Issue Status Distribution</h2>
+  <div class="chart-container-tall"><canvas id="stackedChart"></canvas></div>
+</div>
+
+<!-- Full project table -->
+<div class="card" style="margin-bottom: 32px;">
+  <h2>All Jira Projects</h2>
+  <div class="filter-row">
+    <button class="filter-btn active" onclick="filterTable('all')">All</button>
+    <button class="filter-btn" onclick="filterTable('active')">Active (WIP)</button>
+    <button class="filter-btn" onclick="filterTable('backlog')">All Backlog</button>
+    <button class="filter-btn" onclick="filterTable('complete')">High Completion</button>
+    <button class="filter-btn" onclick="filterTable('empty')">No Issues</button>
+  </div>
+  <table class="project-table" id="projectTable">
+    <thead>
+      <tr>
+        <th>Project</th>
+        <th>Slack Channel</th>
+        <th class="right">Total</th>
+        <th class="right">To Do</th>
+        <th class="right">WIP</th>
+        <th class="right">Done</th>
+        <th style="min-width:140px">Progress</th>
+        <th class="right">Complete</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+const projects = [
+  {
+    key: "RBAD", name: "RecapBuddy Ad Integration", slack: "#recapbuddy-sprint2",
+    total: 24, todo: 24, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/RBAD/board"
+  },
+  {
+    key: "FID", name: "Fidelity", slack: "#fidelity-qa",
+    total: 23, todo: 3, wip: 8, done: 12,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/FID/board"
+  },
+  {
+    key: "ALO", name: "AAA LinkedIn Outreach", slack: "#linkedin-outreach-sprint",
+    total: 26, todo: 2, wip: 2, done: 22,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/ALO/board"
+  },
+  {
+    key: "QAL", name: "Qistmirath (Amra Law)", slack: "#qistmirath-qa",
+    total: 35, todo: 11, wip: 2, done: 22,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/QAL/board"
+  },
+  {
+    key: "ICLD", name: "Impact Creator", slack: "#ic-linkedin-sprint2",
+    total: 23, todo: 13, wip: 4, done: 6,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/ICLD/board"
+  },
+  {
+    key: "AL", name: "Alt Lending", slack: "#alt-lending-blocked",
+    total: 9, todo: 4, wip: 1, done: 4,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/AL/board"
+  },
+  {
+    key: "ALS2", name: "Alt Lending Sprint 2", slack: "#alt-lending-blocked",
+    total: 40, todo: 9, wip: 10, done: 21,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/ALS2/board"
+  },
+  {
+    key: "PI", name: "Pipeline IQ", slack: "#pipeline-iq-sprint3",
+    total: 8, todo: 1, wip: 2, done: 4,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/PI/board"
+  },
+  {
+    key: "PAD", name: "PTG Automations Discovery", slack: "#ptg-automations-blocked",
+    total: 9, todo: 8, wip: 1, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/PAD/board"
+  },
+  {
+    key: "PHG", name: "iPrefer", slack: "—",
+    total: 31, todo: 19, wip: 0, done: 12,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/PHG/board"
+  },
+  {
+    key: "KAN", name: "Kanban", slack: "—",
+    total: 17, todo: 17, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/KAN/board"
+  },
+  {
+    key: "STACP3Q8Q", name: "Telegram AI Chatbot", slack: "—",
+    total: 20, todo: 20, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/STACP3Q8Q/board"
+  },
+  {
+    key: "GU", name: "Golfers-Unite", slack: "#golfers-unite-qa",
+    total: 0, todo: 0, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/GU/board"
+  },
+  {
+    key: "A1", name: "Atlas", slack: "—",
+    total: 0, todo: 0, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/A1/board"
+  },
+  {
+    key: "EN", name: "Entry", slack: "—",
+    total: 0, todo: 0, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/EN/board"
+  },
+  {
+    key: "DJV", name: "demo jira vibe", slack: "—",
+    total: 0, todo: 0, wip: 0, done: 0,
+    url: "https://automationarchitecture.atlassian.net/jira/software/projects/DJV/board"
+  }
+];
+
+// Compute aggregates
+const activeProjects = projects.filter(p => p.total > 0);
+const totalIssues = projects.reduce((s, p) => s + p.total, 0);
+const totalTodo = projects.reduce((s, p) => s + p.todo, 0);
+const totalWip = projects.reduce((s, p) => s + p.wip, 0);
+const totalDone = projects.reduce((s, p) => s + p.done, 0);
+
+document.getElementById('statProjects').textContent = activeProjects.length;
+document.getElementById('statTotal').textContent = totalIssues;
+document.getElementById('statBacklog').textContent = totalTodo;
+document.getElementById('statWip').textContent = totalWip;
+document.getElementById('statDone').textContent = totalDone;
+
+// Completion donut
+new Chart(document.getElementById('completionDonut'), {
+  type: 'doughnut',
+  data: {
+    labels: ['Done', 'In Progress', 'Backlog / To Do'],
+    datasets: [{
+      data: [totalDone, totalWip, totalTodo],
+      backgroundColor: ['#34d399', '#fbbf24', '#a78bfa'],
+      borderWidth: 0,
+      borderRadius: 4,
+      spacing: 3
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    cutout: '65%',
+    plugins: {
+      legend: { position: 'right', labels: { color: '#9ca3af', padding: 16, font: { size: 13 } } }
+    }
+  }
+});
+
+// Completion bar (% done per project, only active)
+const sortedByCompletion = [...activeProjects].sort((a, b) => {
+  const pctA = a.total > 0 ? (a.done / a.total) : 0;
+  const pctB = b.total > 0 ? (b.done / b.total) : 0;
+  return pctB - pctA;
+});
+
+new Chart(document.getElementById('completionBar'), {
+  type: 'bar',
+  data: {
+    labels: sortedByCompletion.map(p => p.name.length > 18 ? p.name.slice(0, 16) + '...' : p.name),
+    datasets: [{
+      data: sortedByCompletion.map(p => Math.round((p.done / p.total) * 100)),
+      backgroundColor: sortedByCompletion.map(p => {
+        const pct = (p.done / p.total) * 100;
+        return pct >= 70 ? '#34d399' : pct >= 30 ? '#fbbf24' : '#a78bfa';
+      }),
+      borderRadius: 6,
+      borderSkipped: false
+    }]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    indexAxis: 'y',
+    plugins: { legend: { display: false } },
+    scales: {
+      x: { grid: { color: '#2d3140' }, ticks: { color: '#6b7280', callback: v => v + '%' }, max: 100, title: { display: true, text: '% Complete', color: '#6b7280' } },
+      y: { grid: { display: false }, ticks: { color: '#e1e4e8', font: { size: 11 } } }
+    }
+  }
+});
+
+// Stacked bar chart - issue status distribution
+const stackedProjects = [...activeProjects].sort((a, b) => b.total - a.total);
+
+new Chart(document.getElementById('stackedChart'), {
+  type: 'bar',
+  data: {
+    labels: stackedProjects.map(p => p.key),
+    datasets: [
+      {
+        label: 'Done',
+        data: stackedProjects.map(p => p.done),
+        backgroundColor: '#34d399',
+        borderRadius: { topLeft: 0, topRight: 0, bottomLeft: 6, bottomRight: 6 },
+        borderSkipped: false
+      },
+      {
+        label: 'In Progress',
+        data: stackedProjects.map(p => p.wip),
+        backgroundColor: '#fbbf24'
+      },
+      {
+        label: 'Backlog / To Do',
+        data: stackedProjects.map(p => p.todo),
+        backgroundColor: '#a78bfa',
+        borderRadius: { topLeft: 6, topRight: 6, bottomLeft: 0, bottomRight: 0 },
+        borderSkipped: false
+      }
+    ]
+  },
+  options: {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'top', labels: { color: '#9ca3af', padding: 16, font: { size: 12 }, usePointStyle: true, pointStyle: 'rectRounded' } }
+    },
+    scales: {
+      x: { stacked: true, grid: { display: false }, ticks: { color: '#e1e4e8', font: { size: 12 } } },
+      y: { stacked: true, grid: { color: '#2d3140' }, ticks: { color: '#6b7280' }, title: { display: true, text: 'Issues', color: '#6b7280' } }
+    }
+  }
+});
+
+// Table rendering
+const tbody = document.querySelector('#projectTable tbody');
+
+function pctClass(pct) {
+  if (pct >= 70) return 'pct-high';
+  if (pct >= 30) return 'pct-mid';
+  return 'pct-low';
+}
+
+function renderTable(filter) {
+  let filtered = projects;
+  if (filter === 'active') filtered = projects.filter(p => p.wip > 0);
+  else if (filter === 'backlog') filtered = projects.filter(p => p.todo > 0);
+  else if (filter === 'complete') filtered = projects.filter(p => p.total > 0 && (p.done / p.total) >= 0.5);
+  else if (filter === 'empty') filtered = projects.filter(p => p.total === 0);
+
+  filtered = [...filtered].sort((a, b) => b.total - a.total);
+
+  tbody.innerHTML = filtered.map(p => {
+    const pct = p.total > 0 ? Math.round((p.done / p.total) * 100) : 0;
+    const donePct = p.total > 0 ? (p.done / p.total * 100) : 0;
+    const wipPct = p.total > 0 ? (p.wip / p.total * 100) : 0;
+    const todoPct = p.total > 0 ? (p.todo / p.total * 100) : 0;
+
+    const slackCell = p.slack === '—' ? `<span style="color:#4b5563">—</span>` : `<span class="slack-tag">${p.slack}</span>`;
+
+    return `<tr>
+      <td>
+        <strong>${p.name}</strong><br>
+        <a class="jira-link" href="${p.url}" target="_blank">${p.key} Board &rarr;</a>
+      </td>
+      <td>${slackCell}</td>
+      <td class="right">${p.total || '<span style="color:#4b5563">0</span>'}</td>
+      <td class="right" style="color:#a78bfa">${p.todo || '<span style="color:#4b5563">0</span>'}</td>
+      <td class="right" style="color:#fbbf24">${p.wip || '<span style="color:#4b5563">0</span>'}</td>
+      <td class="right" style="color:#34d399">${p.done || '<span style="color:#4b5563">0</span>'}</td>
+      <td>
+        ${p.total > 0 ? `<div class="progress-bar">
+          <div class="seg seg-done" style="width:${donePct}%"></div>
+          <div class="seg seg-wip" style="width:${wipPct}%"></div>
+          <div class="seg seg-todo" style="width:${todoPct}%"></div>
+        </div>` : '<span style="color:#4b5563;font-size:12px">No issues</span>'}
+      </td>
+      <td class="right completion-pct ${pctClass(pct)}">${p.total > 0 ? pct + '%' : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+function filterTable(filter) {
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  event.target.classList.add('active');
+  renderTable(filter);
+}
+
+renderTable('all');
+</script>
+</body>
+</html>
